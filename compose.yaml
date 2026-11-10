@@ -1,0 +1,51 @@
+name: flowpilot
+x-backend: &backend
+  build: ./backend
+  environment: &db-env
+    DB_HOST: db
+    POSTGRES_DB: ${POSTGRES_DB:-flowpilot}
+    POSTGRES_USER: ${POSTGRES_USER:-flowpilot}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      <<: *db-env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  init:
+    <<: *backend
+    environment:
+      <<: *db-env
+      DEMO_PASSWORD: ${DEMO_PASSWORD:?Set DEMO_PASSWORD in .env}
+    command: ["sh", "-ec", "alembic upgrade head && python -m app.seed"]
+    depends_on:
+      db:
+        condition: service_healthy
+  api:
+    <<: *backend
+    environment:
+      <<: *db-env
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=2)"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+  web:
+    build: ./frontend
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+volumes:
+  pgdata:
